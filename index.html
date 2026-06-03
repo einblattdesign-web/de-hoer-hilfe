@@ -1,0 +1,266 @@
+<!DOCTYPE html>
+<html lang="de">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>DE Hör-Hilfe</title>
+<style>
+  * { box-sizing: border-box; margin: 0; padding: 0; }
+  body {
+    font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif;
+    background: #f5f5f5;
+    color: #222;
+    min-height: 100vh;
+    padding: 24px 16px;
+  }
+  h1 { font-size: 1.1rem; font-weight: 600; margin-bottom: 20px; color: #444; letter-spacing: 0.02em; }
+  .tabs { display: flex; gap: 4px; margin-bottom: 20px; }
+  .tab {
+    padding: 8px 18px;
+    border: 1px solid #ccc;
+    background: #fff;
+    cursor: pointer;
+    border-radius: 4px;
+    font-size: 0.9rem;
+    color: #555;
+    transition: all 0.15s;
+  }
+  .tab.active {
+    background: #222;
+    color: #fff;
+    border-color: #222;
+  }
+  .panel { display: none; }
+  .panel.active { display: block; }
+
+  /* TTS */
+  textarea {
+    width: 100%;
+    height: 130px;
+    border: 1px solid #ccc;
+    border-radius: 6px;
+    padding: 12px;
+    font-size: 1rem;
+    resize: vertical;
+    outline: none;
+    background: #fff;
+    line-height: 1.6;
+  }
+  textarea:focus { border-color: #888; }
+  .controls { display: flex; gap: 8px; margin-top: 10px; flex-wrap: wrap; }
+  .btn {
+    padding: 9px 20px;
+    border: 1px solid #ccc;
+    border-radius: 4px;
+    background: #fff;
+    cursor: pointer;
+    font-size: 0.9rem;
+    color: #333;
+    transition: background 0.15s;
+  }
+  .btn:hover { background: #eee; }
+  .btn.primary {
+    background: #222;
+    color: #fff;
+    border-color: #222;
+  }
+  .btn.primary:hover { background: #444; }
+  .btn:disabled { opacity: 0.4; cursor: not-allowed; }
+
+  label { font-size: 0.82rem; color: #666; display: block; margin-bottom: 4px; margin-top: 14px; }
+  input[type=range] { width: 140px; accent-color: #222; vertical-align: middle; }
+  .range-val { font-size: 0.82rem; color: #666; margin-left: 6px; }
+
+  /* STT */
+  .stt-status {
+    font-size: 0.85rem;
+    color: #888;
+    margin-bottom: 10px;
+    min-height: 1.2em;
+  }
+  .stt-status.listening { color: #c0392b; }
+  .transcript-box {
+    width: 100%;
+    min-height: 160px;
+    max-height: 320px;
+    overflow-y: auto;
+    border: 1px solid #ccc;
+    border-radius: 6px;
+    padding: 12px;
+    background: #fff;
+    font-size: 1rem;
+    line-height: 1.7;
+    white-space: pre-wrap;
+  }
+  .interim { color: #aaa; font-style: italic; }
+  .stt-controls { display: flex; gap: 8px; margin-top: 10px; }
+  .rec-dot {
+    display: inline-block;
+    width: 8px; height: 8px;
+    border-radius: 50%;
+    background: #c0392b;
+    margin-right: 6px;
+    animation: blink 1s infinite;
+  }
+  @keyframes blink { 0%,100%{opacity:1} 50%{opacity:0.2} }
+</style>
+</head>
+<body>
+<h1>🇩🇪 ドイツ語 聴取補助</h1>
+
+<div class="tabs">
+  <button class="tab active" onclick="switchTab('tts')">📢 読み上げ</button>
+  <button class="tab" onclick="switchTab('stt')">🎙 文字起こし</button>
+</div>
+
+<!-- TTS Panel -->
+<div class="panel active" id="panel-tts">
+  <label for="ttsInput">ドイツ語テキストを入力</label>
+  <textarea id="ttsInput" placeholder="Guten Morgen! Wie kann ich Ihnen helfen?"></textarea>
+
+  <label>速度 <input type="range" id="rateSlider" min="0.5" max="1.5" step="0.05" value="0.85" oninput="document.getElementById('rateVal').textContent=this.value"> <span class="range-val" id="rateVal">0.85</span></label>
+  <label>ピッチ <input type="range" id="pitchSlider" min="0.5" max="2" step="0.1" value="1.0" oninput="document.getElementById('pitchVal').textContent=this.value"> <span class="range-val" id="pitchVal">1.0</span></label>
+
+  <div class="controls">
+    <button class="btn primary" id="speakBtn" onclick="speak()">▶ 読み上げ</button>
+    <button class="btn" id="stopBtn" onclick="stopSpeak()" disabled>■ 停止</button>
+    <button class="btn" onclick="document.getElementById('ttsInput').value=''">クリア</button>
+  </div>
+</div>
+
+<!-- STT Panel -->
+<div class="panel" id="panel-stt">
+  <div class="stt-status" id="sttStatus">待機中</div>
+  <div class="transcript-box" id="transcriptBox"></div>
+  <div class="stt-controls">
+    <button class="btn primary" id="startBtn" onclick="startSTT()">🎙 開始</button>
+    <button class="btn" id="stopSttBtn" onclick="stopSTT()" disabled>■ 停止</button>
+    <button class="btn" onclick="clearTranscript()">クリア</button>
+  </div>
+  <label style="margin-top:12px;color:#aaa;font-size:0.78rem;">※ Chrome推奨。マイクがスピーカー音を拾う環境（外部マイク等）での使用を推奨します。</label>
+</div>
+
+<script>
+// --- TTS ---
+let ttsUtter = null;
+
+function speak() {
+  const text = document.getElementById('ttsInput').value.trim();
+  if (!text) return;
+  stopSpeak();
+  const u = new SpeechSynthesisUtterance(text);
+  u.lang = 'de-DE';
+  u.rate = parseFloat(document.getElementById('rateSlider').value);
+  u.pitch = parseFloat(document.getElementById('pitchSlider').value);
+
+  // prefer a German voice if available
+  const voices = speechSynthesis.getVoices();
+  const deVoice = voices.find(v => v.lang.startsWith('de'));
+  if (deVoice) u.voice = deVoice;
+
+  u.onstart = () => {
+    document.getElementById('speakBtn').disabled = true;
+    document.getElementById('stopBtn').disabled = false;
+  };
+  u.onend = u.onerror = () => {
+    document.getElementById('speakBtn').disabled = false;
+    document.getElementById('stopBtn').disabled = true;
+  };
+  ttsUtter = u;
+  speechSynthesis.speak(u);
+}
+
+function stopSpeak() {
+  speechSynthesis.cancel();
+  document.getElementById('speakBtn').disabled = false;
+  document.getElementById('stopBtn').disabled = true;
+}
+
+// voices load async
+speechSynthesis.onvoiceschanged = () => {};
+
+// --- STT ---
+let recognition = null;
+let finalText = '';
+let isListening = false;
+
+function startSTT() {
+  const SR = window.SpeechRecognition || window.webkitSpeechRecognition;
+  if (!SR) {
+    document.getElementById('sttStatus').textContent = 'このブラウザは未対応です（Chrome推奨）';
+    return;
+  }
+  if (isListening) return;
+
+  recognition = new SR();
+  recognition.lang = 'de-DE';
+  recognition.continuous = true;
+  recognition.interimResults = true;
+
+  recognition.onstart = () => {
+    isListening = true;
+    const s = document.getElementById('sttStatus');
+    s.innerHTML = '<span class="rec-dot"></span>録音中...';
+    s.className = 'stt-status listening';
+    document.getElementById('startBtn').disabled = true;
+    document.getElementById('stopSttBtn').disabled = false;
+  };
+
+  recognition.onresult = (e) => {
+    let interim = '';
+    for (let i = e.resultIndex; i < e.results.length; i++) {
+      const t = e.results[i][0].transcript;
+      if (e.results[i].isFinal) {
+        finalText += t + '\n';
+      } else {
+        interim += t;
+      }
+    }
+    const box = document.getElementById('transcriptBox');
+    box.innerHTML =
+      finalText.split('\n').filter(Boolean).map(l => `<div>${l}</div>`).join('') +
+      (interim ? `<div class="interim">${interim}</div>` : '');
+    box.scrollTop = box.scrollHeight;
+  };
+
+  recognition.onerror = (e) => {
+    document.getElementById('sttStatus').textContent = 'エラー: ' + e.error;
+    document.getElementById('sttStatus').className = 'stt-status';
+    isListening = false;
+    document.getElementById('startBtn').disabled = false;
+    document.getElementById('stopSttBtn').disabled = true;
+  };
+
+  recognition.onend = () => {
+    // auto-restart if not manually stopped
+    if (isListening) {
+      recognition.start();
+    }
+  };
+
+  recognition.start();
+}
+
+function stopSTT() {
+  isListening = false;
+  if (recognition) recognition.stop();
+  document.getElementById('sttStatus').textContent = '停止しました';
+  document.getElementById('sttStatus').className = 'stt-status';
+  document.getElementById('startBtn').disabled = false;
+  document.getElementById('stopSttBtn').disabled = true;
+}
+
+function clearTranscript() {
+  finalText = '';
+  document.getElementById('transcriptBox').innerHTML = '';
+}
+
+function switchTab(tab) {
+  document.querySelectorAll('.tab').forEach((t,i) => t.classList.toggle('active', (tab==='tts'?0:1)===i));
+  document.getElementById('panel-tts').classList.toggle('active', tab==='tts');
+  document.getElementById('panel-stt').classList.toggle('active', tab==='stt');
+  if (tab === 'tts') stopSTT();
+}
+</script>
+</body>
+</html>
